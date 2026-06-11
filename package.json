@@ -1,6 +1,6 @@
 {
   "name": "@styleflow.app/cli",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Local-first StyleFlow compiler and runtime bridge.",
   "type": "module",
   "license": "MIT",
