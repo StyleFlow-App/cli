@@ -1,0 +1,87 @@
+{
+  "name": "@styleflow.app/cli",
+  "version": "0.1.1",
+  "description": "Local-first StyleFlow compiler and runtime bridge.",
+  "type": "module",
+  "license": "MIT",
+  "homepage": "https://styleflow.app",
+  "author": "StyleFlow (styleflow.app)",
+  "keywords": [
+    "styleflow",
+    "design-tokens",
+    "design-system",
+    "css",
+    "tailwind",
+    "figma",
+    "cli",
+    "compiler",
+    "design-system-cli"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "styleflow": "dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./authoring": {
+      "types": "./dist/authoring/index.d.ts",
+      "import": "./dist/authoring/index.js"
+    },
+    "./compiler": {
+      "types": "./dist/compiler/index.d.ts",
+      "import": "./dist/compiler/index.js"
+    },
+    "./contracts": {
+      "types": "./dist/contracts.d.ts",
+      "import": "./dist/contracts.js"
+    },
+    "./config": {
+      "types": "./dist/config/index.d.ts",
+      "import": "./dist/config/index.js"
+    },
+    "./format": {
+      "types": "./dist/format/index.d.ts",
+      "import": "./dist/format/index.js"
+    },
+    "./ui": {
+      "types": "./dist/ui/index.d.ts",
+      "import": "./dist/ui/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepublishOnly": "npm run test && npm run build"
+  },
+  "dependencies": {
+    "chokidar": "^4.0.3",
+    "jiti": "^2.6.1"
+  },
+  "peerDependencies": {
+    "react": ">=18.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^24.7.2",
+    "@types/react": "^19.1.16",
+    "react": "^19.1.1",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
