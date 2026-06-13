@@ -1,14 +1,14 @@
 import { isTransparentCollection } from "../contracts.js";
 import type { StyleflowTokensFile } from "../format/index.js";
-import { cssModeTokenName, cssTokenName, isAlias, TokenModel, tokenKey, valueToCss } from "./model.js";
+import { isAlias, TokenModel, tokenKey, valueToCss, type InternalTokenNameMode } from "./model.js";
 
 /**
  * Genera il dump `tokens.css` legacy (per-mode + base). Usato solo in modalità
  * `output.legacyTokensCss`; il flusso di default elimina questo file e collassa
  * i layer alias direttamente in runtime/styleflow.css.
  */
-export function generateTokensCss(tokens: StyleflowTokensFile, included?: ReadonlySet<string>, compact = false): string {
-  const model = new TokenModel(tokens, { transparent: false });
+export function generateTokensCss(tokens: StyleflowTokensFile, included?: ReadonlySet<string>, compact = false, internalTokenNames?: InternalTokenNameMode): string {
+  const model = new TokenModel(tokens, { transparent: false, internalTokenNames });
   const declarations: string[] = [];
   for (const collection of tokens.collections) {
     for (const variable of collection.variables) {
@@ -16,13 +16,13 @@ export function generateTokensCss(tokens: StyleflowTokensFile, included?: Readon
         continue;
       }
       if (compact) {
-        declarations.push(`  ${cssTokenName(collection.name, variable.name)}: ${valueToCss(collection, variable, variable.valuesByMode[collection.modes[0]], model, collection.modes[0])};`);
+        declarations.push(`  ${model.cssTokenName(collection.name, variable.name)}: ${valueToCss(collection, variable, variable.valuesByMode[collection.modes[0]], model, collection.modes[0])};`);
         continue;
       }
       for (const mode of collection.modes) {
-        declarations.push(`  ${cssModeTokenName(collection.name, variable.name, mode)}: ${valueToCss(collection, variable, variable.valuesByMode[mode], model, mode)};`);
+        declarations.push(`  ${model.cssModeTokenName(collection.name, variable.name, mode)}: ${valueToCss(collection, variable, variable.valuesByMode[mode], model, mode)};`);
       }
-      declarations.push(`  ${cssTokenName(collection.name, variable.name)}: var(${cssModeTokenName(collection.name, variable.name, collection.modes[0])});`);
+      declarations.push(`  ${model.cssTokenName(collection.name, variable.name)}: var(${model.cssModeTokenName(collection.name, variable.name, collection.modes[0])});`);
     }
   }
   return [

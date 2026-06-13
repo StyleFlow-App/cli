@@ -1,8 +1,9 @@
 import type { StyleflowTokensFile } from "../format/index.js";
 import { typographyTextStyles } from "./contractOutput.js";
 import { cssSlug } from "./model.js";
+import type { RuntimeUsage } from "./usage.js";
 
-export function generateThemeCss(tokens?: StyleflowTokensFile): string {
+export function generateThemeCss(tokens?: StyleflowTokensFile, usage?: RuntimeUsage): string {
   const declarations = [
     "  --color-local-surface: var(--local-surface);",
     "  --color-local-surface-scrim: var(--local-surface-scrim);",
@@ -30,7 +31,7 @@ export function generateThemeCss(tokens?: StyleflowTokensFile): string {
   ];
 
   if (tokens) {
-    for (const style of typographyTextStyles(tokens)) {
+    for (const style of selectedThemeTextStyles(tokens, usage)) {
       const id = cssSlug(style.id);
       const prefix = cssSlug(style.tokenPrefix);
       declarations.push(`  --font-${id}: var(--typography-${prefix}-family);`);
@@ -46,4 +47,12 @@ export function generateThemeCss(tokens?: StyleflowTokensFile): string {
 ${declarations.join("\n")}
 }
 `;
+}
+
+function selectedThemeTextStyles(tokens: StyleflowTokensFile, usage?: RuntimeUsage): ReturnType<typeof typographyTextStyles> {
+  const styles = typographyTextStyles(tokens);
+  if (!usage || usage.textStyles.has("*")) {
+    return styles;
+  }
+  return styles.filter((style) => usage.textStyles.has(style.id));
 }

@@ -12,7 +12,7 @@ import {
 } from "../contracts.js";
 import type { StyleflowTokensFile } from "../format/index.js";
 import { typographyTextStyles } from "./contractOutput.js";
-import { cssSlug, cssTokenName, tokenKey, TokenModel, valueToCss } from "./model.js";
+import { cssSlug, tokenKey, TokenModel, valueToCss, type InternalTokenNameMode } from "./model.js";
 import { tokenDependencyClosure, tokenValueReferenceKeys } from "./tokensCss.js";
 import type { RuntimeUsage } from "./usage.js";
 
@@ -51,6 +51,8 @@ export interface RuntimeCssOutput {
 export interface RuntimeCssOptions {
   /** Collassa i layer alias trasparenti (default true). Vedi TokenModel. */
   transparent?: boolean;
+  /** Nomi delle custom property interne emesse dal runtime. */
+  internalTokenNames?: InternalTokenNameMode;
 }
 
 export function generateRuntimeCss(tokens: StyleflowTokensFile, usage?: RuntimeUsage, options?: RuntimeCssOptions): string {
@@ -58,13 +60,13 @@ export function generateRuntimeCss(tokens: StyleflowTokensFile, usage?: RuntimeU
 }
 
 export function generateRuntimeCssOutput(tokens: StyleflowTokensFile, usage?: RuntimeUsage, options: RuntimeCssOptions = {}): RuntimeCssOutput {
-  const model = new TokenModel(tokens, { transparent: options.transparent !== false });
+  const model = new TokenModel(tokens, { transparent: options.transparent !== false, internalTokenNames: options.internalTokenNames });
   const roots = new Set<string>();
   const resolverChunks = [
     ...breakpointResolvers(model, roots, usage),
     ...rootDefaults(model, roots, usage),
     ...axisResolvers(model, roots, usage),
-    ...surfaceResolvers(roots, usage),
+    ...surfaceResolvers(model, roots, usage),
     ...typographyProperties(model, roots, usage),
     ...textStyleResolvers(model, usage)
   ].filter(Boolean);
@@ -93,14 +95,14 @@ function themeResolvers(model: TokenModel, usage?: RuntimeUsage, included?: Read
       const chunks = [
         cssBlock(`:root,\n[data-theme="${defaultTheme}"]`, variables.map((variable) => {
           addValueReferences(model, roots, collection.name, variable.name, defaultTheme);
-          return valueDeclaration(cssTokenName(collection.name, variable.name), valueToCss(collection, variable, variable.valuesByMode[defaultTheme], model, defaultTheme));
+          return valueDeclaration(model.cssTokenName(collection.name, variable.name), valueToCss(collection, variable, variable.valuesByMode[defaultTheme], model, defaultTheme));
         }))
       ];
       for (const theme of collection.modes.filter((mode) => mode !== defaultTheme)) {
         if (!usage || usage.themes.has(theme as never)) {
           chunks.push(cssBlock(`[data-theme="${theme}"]`, variables.map((variable) => {
             addValueReferences(model, roots, collection.name, variable.name, theme);
-            return valueDeclaration(cssTokenName(collection.name, variable.name), valueToCss(collection, variable, variable.valuesByMode[theme], model, theme));
+            return valueDeclaration(model.cssTokenName(collection.name, variable.name), valueToCss(collection, variable, variable.valuesByMode[theme], model, theme));
           })));
         }
       }
@@ -146,13 +148,13 @@ function rootDefaults(model: TokenModel, roots: Set<string>, usage?: RuntimeUsag
       modeDeclarations(COLLECTION_NAMES.colorTone, "neutral", model, roots, colorToneVariableFilter(usage))),
     cssBlock(`:root,\n[data-color-intensity="1"]`, [
       ...modeDeclarations(COLLECTION_NAMES.colorIntensity, "1", model, roots, colorIntensityVariableFilter(usage)),
-      ...colorLocals(roots)
+      ...colorLocals(model, roots)
     ]),
     cssBlock(`:root,\n[data-layout-density="md"]`,
       modeDeclarations(COLLECTION_NAMES.layoutRoleDensity, "md", model, roots, layoutDensityVariableFilter(usage))),
     cssBlock(`:root,\n[data-layout-role="none"]`, [
       ...modeDeclarations(COLLECTION_NAMES.layoutRole, "none", model, roots),
-      ...layoutLocals(roots)
+      ...layoutLocals(model, roots)
     ])
   ];
 }
@@ -168,7 +170,7 @@ function axisResolvers(model: TokenModel, roots: Set<string>, usage?: RuntimeUsa
     if (intensity !== "1") {
       chunks.push(cssBlock(`[data-color-intensity="${intensity}"]`, [
         ...modeDeclarations(COLLECTION_NAMES.colorIntensity, intensity, model, roots, colorIntensityVariableFilter(usage)),
-        ...colorLocals(roots)
+        ...colorLocals(model, roots)
       ]));
     }
   }
@@ -181,42 +183,42 @@ function axisResolvers(model: TokenModel, roots: Set<string>, usage?: RuntimeUsa
     if (role !== "none") {
       chunks.push(cssBlock(`[data-layout-role="${role}"]`, [
         ...modeDeclarations(COLLECTION_NAMES.layoutRole, role, model, roots),
-        ...layoutLocals(roots)
+        ...layoutLocals(model, roots)
       ]));
     }
   }
   return chunks;
 }
 
-function surfaceResolvers(roots: Set<string>, usage?: RuntimeUsage): string[] {
+function surfaceResolvers(model: TokenModel, roots: Set<string>, usage?: RuntimeUsage): string[] {
   const chunks: string[] = [];
   for (const kind of selectedStaticSurfaces(usage)) {
     for (const role of LOCAL_COLOR_ROLES) {
       addReference(roots, COLLECTION_NAMES.colorIntensity, `on-surface/static/${kind}/${staticRole[role]}`);
     }
     chunks.push(cssBlock(`[data-surface-type="${kind}"]`, LOCAL_COLOR_ROLES.map((role) =>
-      `  --local-${role}: var(${cssTokenName(COLLECTION_NAMES.colorIntensity, `on-surface/static/${kind}/${staticRole[role]}`)});`)));
+      `  --local-${role}: var(${model.cssTokenName(COLLECTION_NAMES.colorIntensity, `on-surface/static/${kind}/${staticRole[role]}`)});`)));
   }
   for (const [surface, options] of selectedInteractiveSurfaces(usage)) {
-    chunks.push(interactiveSurfaceBlock(roots, surface, options.priority, "default", ""));
-    chunks.push(interactiveSurfaceBlock(roots, surface, options.priority, "hover", `:hover:not([data-interaction-state])`));
-    chunks.push(interactiveSurfaceBlock(roots, surface, options.priority, "active", `:active:not([data-interaction-state])`));
-    chunks.push(interactiveSurfaceBlock(roots, surface, options.priority, "focus", `:focus-visible:not([data-interaction-state])`));
-    chunks.push(interactiveSurfaceBlock(roots, surface, options.priority, "disabled", `:disabled:not([data-interaction-state]),\n[data-surface-type="${surface}"][aria-disabled="true"]:not([data-interaction-state])`));
+    chunks.push(interactiveSurfaceBlock(model, roots, surface, options.priority, "default", ""));
+    chunks.push(interactiveSurfaceBlock(model, roots, surface, options.priority, "hover", `:hover:not([data-interaction-state])`));
+    chunks.push(interactiveSurfaceBlock(model, roots, surface, options.priority, "active", `:active:not([data-interaction-state])`));
+    chunks.push(interactiveSurfaceBlock(model, roots, surface, options.priority, "focus", `:focus-visible:not([data-interaction-state])`));
+    chunks.push(interactiveSurfaceBlock(model, roots, surface, options.priority, "disabled", `:disabled:not([data-interaction-state]),\n[data-surface-type="${surface}"][aria-disabled="true"]:not([data-interaction-state])`));
     for (const state of INTERACTION_STATES) {
-      chunks.push(interactiveSurfaceBlock(roots, surface, options.priority, state, `[data-interaction-state="${state}"]`));
+      chunks.push(interactiveSurfaceBlock(model, roots, surface, options.priority, state, `[data-interaction-state="${state}"]`));
     }
   }
   return chunks;
 }
 
-function interactiveSurfaceBlock(roots: Set<string>, surface: string, priority: string, state: string, suffix: string): string {
+function interactiveSurfaceBlock(model: TokenModel, roots: Set<string>, surface: string, priority: string, state: string, suffix: string): string {
   const selector = suffix.startsWith("[") ? `[data-surface-type="${surface}"]${suffix}` : `[data-surface-type="${surface}"]${suffix}`;
   for (const source of Object.values(interactiveRole)) {
     addReference(roots, COLLECTION_NAMES.colorIntensity, `on-surface/interactive/${priority}/${state}/${source}`);
   }
   const declarations = Object.entries(interactiveRole).map(([local, source]) =>
-    `  --local-${local}: var(${cssTokenName(COLLECTION_NAMES.colorIntensity, `on-surface/interactive/${priority}/${state}/${source}`)});`);
+    `  --local-${local}: var(${model.cssTokenName(COLLECTION_NAMES.colorIntensity, `on-surface/interactive/${priority}/${state}/${source}`)});`);
   return cssBlock(selector, declarations);
 }
 
@@ -293,18 +295,18 @@ function fontWeight(value: string): number {
   return ({ thin: 100, extralight: 200, light: 300, regular: 400, medium: 500, semibold: 600, bold: 700, extrabold: 800, black: 900 } as Record<string, number>)[normalized] ?? 400;
 }
 
-function colorLocals(roots: Set<string>): string[] {
+function colorLocals(model: TokenModel, roots: Set<string>): string[] {
   return LOCAL_COLOR_ROLES.map((role) => {
     addReference(roots, COLLECTION_NAMES.colorIntensity, `local/${role}`);
-    return `  --local-${role}: var(${cssTokenName(COLLECTION_NAMES.colorIntensity, `local/${role}`)});`;
+    return `  --local-${role}: var(${model.cssTokenName(COLLECTION_NAMES.colorIntensity, `local/${role}`)});`;
   });
 }
 
-function layoutLocals(roots: Set<string>): string[] {
+function layoutLocals(model: TokenModel, roots: Set<string>): string[] {
   return LOCAL_LAYOUT_PROPERTIES.map((property) => {
     const local = property === "padding-x" ? "px" : property === "padding-y" ? "py" : property;
     addReference(roots, COLLECTION_NAMES.layoutRole, property);
-    return `  --local-${local}: var(${cssTokenName(COLLECTION_NAMES.layoutRole, property)});`;
+    return `  --local-${local}: var(${model.cssTokenName(COLLECTION_NAMES.layoutRole, property)});`;
   });
 }
 
@@ -316,7 +318,7 @@ function modeDeclarations(collectionName: string, mode: string, model: TokenMode
   const collection = model.collection(collectionName);
   return collection ? collection.variables.filter((variable) => !filter || filter(variable.name)).map((variable) => {
     addValueReferences(model, roots, collectionName, variable.name, mode);
-    return valueDeclaration(cssTokenName(collectionName, variable.name), valueToCss(collection, variable, variable.valuesByMode[mode], model, mode));
+    return valueDeclaration(model.cssTokenName(collectionName, variable.name), valueToCss(collection, variable, variable.valuesByMode[mode], model, mode));
   }) : [];
 }
 

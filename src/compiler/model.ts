@@ -21,20 +21,35 @@ export interface TokenModelOptions {
    * `false` ripristina l'emissione legacy (ogni alias resta `var(--sf-...)`).
    */
   transparent?: boolean;
+  /**
+   * Nome delle custom property interne emesse dal compiler. `compact` riduce il
+   * runtime CSS; `verbose` mantiene i nomi storici `--sf-*` per debug.
+   */
+  internalTokenNames?: InternalTokenNameMode;
 }
+
+export type InternalTokenNameMode = "compact" | "verbose";
 
 export class TokenModel {
   readonly collections = new Map<string, StyleflowTokenCollection>();
   readonly variables = new Map<string, StyleflowTokenVariable>();
   readonly transparent: boolean;
+  readonly internalTokenNames: InternalTokenNameMode;
+  private readonly compactTokenNames = new Map<string, string>();
 
   constructor(readonly source: StyleflowTokensFile, options: TokenModelOptions = {}) {
     this.transparent = options.transparent !== false;
+    this.internalTokenNames = options.internalTokenNames ?? "compact";
     for (const collection of source.collections) {
       this.collections.set(collection.name, collection);
       for (const variable of collection.variables) {
         this.variables.set(tokenKey(collection.name, variable.name), variable);
       }
+    }
+    let index = 0;
+    for (const key of Array.from(this.variables.keys()).sort()) {
+      this.compactTokenNames.set(key, `--_sf-${compactTokenSuffix(index)}`);
+      index += 1;
     }
   }
 
@@ -59,6 +74,20 @@ export class TokenModel {
   resolveString(collection: string, name: string, mode: string): string | undefined {
     const resolved = this.resolveValue(collection, name, mode, []);
     return typeof resolved === "string" ? resolved : undefined;
+  }
+
+  cssTokenName(collection: string, name: string): string {
+    if (this.internalTokenNames === "verbose") {
+      return cssTokenName(collection, name);
+    }
+    return this.compactTokenNames.get(tokenKey(collection, name)) ?? cssTokenName(collection, name);
+  }
+
+  cssModeTokenName(collection: string, name: string, mode: string): string {
+    if (this.internalTokenNames === "verbose") {
+      return cssModeTokenName(collection, name, mode);
+    }
+    return `${this.cssTokenName(collection, name)}--${cssSlug(mode)}`;
   }
 
   private resolveValue(collectionName: string, name: string, mode: string, seen: string[]): TokenModeValue | undefined {
@@ -97,6 +126,17 @@ export function cssSlug(value: string): string {
     .toLowerCase();
 }
 
+function compactTokenSuffix(index: number): string {
+  const alphabet = "abcdefghijklmnopqrstuvwxyz";
+  let value = index;
+  let suffix = "";
+  do {
+    suffix = alphabet[value % alphabet.length] + suffix;
+    value = Math.floor(value / alphabet.length) - 1;
+  } while (value >= 0);
+  return suffix;
+}
+
 export function valueToCss(
   collection: StyleflowTokenCollection,
   variable: StyleflowTokenVariable,
@@ -108,7 +148,7 @@ export function valueToCss(
     if (model?.transparent) {
       return emitAliasValue(model, value.alias.collection, value.alias.name, mode);
     }
-    return `var(${cssTokenName(value.alias.collection, value.alias.name)})`;
+    return `var(${model?.cssTokenName(value.alias.collection, value.alias.name) ?? cssTokenName(value.alias.collection, value.alias.name)})`;
   }
   if (variable.type === "COLOR") {
     if (!isRgba(value)) {
@@ -142,7 +182,7 @@ export function valueToCss(
  * - target INLINE (Primitives) → valore concreto (`rgb(...)` o dimensione Tailwind);
  * - target COLLAPSE (OnSurfaceInteractive*) → segue la catena 1:1 fino al primo
  *   token reale e ne emette `var(...)`;
- * - altrimenti → `var(--sf-...)` del target.
+ * - altrimenti → `var(...)` del target usando il nome interno configurato.
  */
 export function emitAliasValue(model: TokenModel, collectionName: string, name: string, mode?: string): string {
   if (INLINE_COLLECTIONS.has(collectionName)) {
@@ -156,7 +196,7 @@ export function emitAliasValue(model: TokenModel, collectionName: string, name: 
     // Foglia concreta dentro una collezione collapse (non previsto): inlinea.
     return inlineConcreteValue(model, collectionName, name, mode);
   }
-  return `var(${cssTokenName(collectionName, name)})`;
+  return `var(${model.cssTokenName(collectionName, name)})`;
 }
 
 function nextAliasTarget(model: TokenModel, collectionName: string, name: string, mode?: string): { collection: string; name: string } | undefined {

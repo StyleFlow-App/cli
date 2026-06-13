@@ -7,6 +7,7 @@ import {
   type StyleFlowBuildType,
   type StyleFlowConfig,
   type StyleFlowDynamicMode,
+  type StyleFlowInternalTokenNameMode,
   type StyleFlowStrategy
 } from "../config/index.js";
 import { parseStyleflowTokens, type StyleflowTokensFile } from "../format/index.js";
@@ -78,10 +79,21 @@ export interface StyleflowReport {
   buildType: StyleFlowBuildType;
   strategy: StyleFlowStrategy;
   cssBytes: number;
+  cssBreakdown: StyleflowCssBreakdown;
   contentFiles: number;
   usageManifestFiles: string[];
   errors: ValidationIssue[];
   warnings: ValidationIssue[];
+}
+
+export interface StyleflowCssBreakdown {
+  styleflowBytes: number;
+  themeBytes: number;
+  runtimeBytes: number;
+  baseBytes: number;
+  publicCustomProperties: number;
+  internalCustomProperties: number;
+  internalTokenNameMode: StyleFlowInternalTokenNameMode;
 }
 
 export interface CompilationResult {
@@ -128,11 +140,12 @@ async function runCompilation(options: CompileOptions): Promise<CompilationResul
   // Modalità di default: layer alias collassati, tokens.css eliminato, un solo
   // styleflow.css. `output.legacyTokensCss` ripristina il dump multi-file storico.
   const transparent = config.output.legacyTokensCss !== true;
-  const runtime = generateRuntimeCssOutput(tokens, usage, { transparent });
+  const internalTokenNames = config.output.internalTokenNames ?? "compact";
+  const runtime = generateRuntimeCssOutput(tokens, usage, { transparent, internalTokenNames });
   const included = usage ? runtime.tokenKeys : undefined;
-  const themeCss = config.tailwind.enabled ? generateThemeCss(tokens) : "";
+  const themeCss = config.tailwind.enabled ? generateThemeCss(tokens, usage) : "";
   const baseCss = generateBaseCss(tokens, { utilities: config.utilities?.emit !== false, typography: config.typography?.emitBase !== false });
-  const tokensCss = transparent ? "" : generateTokensCss(tokens, included, Boolean(usage));
+  const tokensCss = transparent ? "" : generateTokensCss(tokens, included, Boolean(usage), internalTokenNames);
   const outputs: Record<string, string> = {};
   if (themeCss) outputs["theme.css"] = themeCss;
   if (tokensCss) outputs["tokens.css"] = tokensCss;
@@ -163,12 +176,27 @@ async function runCompilation(options: CompileOptions): Promise<CompilationResul
   }
   // Misura il singolo file effettivamente importato (styleflow.css), non la
   // somma: gli altri .css sono debug e sono già contenuti nel bundle.
-  const cssBytes = Buffer.byteLength(outputs["styleflow.css"], "utf8");
+  const cssBreakdown = createCssBreakdown(outputs, internalTokenNames);
+  const cssBytes = cssBreakdown.styleflowBytes;
   if (cssBytes > 500_000) {
     warnings.push({
       level: "warning",
       path: "output.css",
       message: budgetWarningMessage(strategy, cssBytes)
+    });
+  }
+  if (cssBreakdown.runtimeBytes > 500_000) {
+    warnings.push({
+      level: "warning",
+      path: "output.runtime.css",
+      message: `Generated runtime.css is ${cssBreakdown.runtimeBytes} bytes; runtime resolvers exceed the recommended 500000 byte budget for ${strategy}.`
+    });
+  }
+  if (cssBreakdown.internalCustomProperties > 2_500) {
+    warnings.push({
+      level: "warning",
+      path: "output.internalCustomProperties",
+      message: `Generated CSS defines ${cssBreakdown.internalCustomProperties} internal custom properties; review runtime usage pruning and safelists.`
     });
   }
   const generatedFiles = [...Object.keys(outputs), "report.json"];
@@ -180,6 +208,7 @@ async function runCompilation(options: CompileOptions): Promise<CompilationResul
     buildType,
     strategy,
     cssBytes,
+    cssBreakdown,
     contentFiles: usage?.contentFiles.length ?? 0,
     usageManifestFiles: usage?.usageManifestFiles ?? [],
     errors,
@@ -296,6 +325,52 @@ function usageFromPublicContract(tokens: StyleflowTokensFile): RuntimeUsage {
     usageManifestFiles: [],
     issues: []
   };
+}
+
+function createCssBreakdown(outputs: Record<string, string>, internalTokenNameMode: StyleFlowInternalTokenNameMode): StyleflowCssBreakdown {
+  const styleflowCss = outputs["styleflow.css"] ?? "";
+  const names = customPropertyDefinitions(styleflowCss);
+  return {
+    styleflowBytes: byteLength(styleflowCss),
+    themeBytes: byteLength(outputs["theme.css"] ?? ""),
+    runtimeBytes: byteLength(outputs["runtime.css"] ?? ""),
+    baseBytes: byteLength(outputs["base.css"] ?? ""),
+    publicCustomProperties: names.filter(isPublicCustomProperty).length,
+    internalCustomProperties: names.filter((name) => isInternalCustomProperty(name, internalTokenNameMode)).length,
+    internalTokenNameMode
+  };
+}
+
+function customPropertyDefinitions(css: string): string[] {
+  return Array.from(css.matchAll(/^\s*(--[A-Za-z0-9_-]+)\s*:/gm), (match) => match[1]);
+}
+
+function isPublicCustomProperty(name: string): boolean {
+  return name.startsWith("--local-")
+    || name.startsWith("--typography-")
+    || name.startsWith("--color-local-")
+    || name.startsWith("--spacing-local-")
+    || name === "--radius-local"
+    || name === "--border-width-local"
+    || name === "--container-local-container"
+    || name.startsWith("--font-")
+    || name.startsWith("--text-")
+    || name.startsWith("--font-weight-")
+    || name.startsWith("--leading-")
+    || name.startsWith("--sf-font-")
+    || name.startsWith("--sf-weight-")
+    || name.startsWith("--sf-leading-");
+}
+
+function isInternalCustomProperty(name: string, mode: StyleFlowInternalTokenNameMode): boolean {
+  if (mode === "compact") {
+    return name.startsWith("--_sf-");
+  }
+  return name.startsWith("--sf-") && !isPublicCustomProperty(name);
+}
+
+function byteLength(value: string): number {
+  return Buffer.byteLength(value, "utf8");
 }
 
 function budgetWarningMessage(strategy: StyleFlowStrategy, cssBytes: number): string {

@@ -2,9 +2,11 @@ export type StyleFlowBuildType = "dev" | "production";
 
 export type StyleFlowStrategy = "public-contract" | "usage-based" | "full";
 export type StyleFlowDynamicMode = "error" | "contract";
+export type StyleFlowInternalTokenNameMode = "compact" | "verbose";
 
 export const STYLEFLOW_STRATEGIES: readonly StyleFlowStrategy[] = ["public-contract", "usage-based", "full"];
 export const STYLEFLOW_DYNAMIC_MODES: readonly StyleFlowDynamicMode[] = ["error", "contract"];
+export const STYLEFLOW_INTERNAL_TOKEN_NAME_MODES: readonly StyleFlowInternalTokenNameMode[] = ["compact", "verbose"];
 
 export interface StyleFlowRuntimeSafelist {
   themes?: string[];
@@ -30,6 +32,11 @@ export interface StyleFlowConfig {
      * Default `false` (riduzione attiva, un solo `styleflow.css`).
      */
     legacyTokensCss?: boolean;
+    /**
+     * Nomi delle custom property interne del compiler. Default `compact`;
+     * `verbose` mantiene i nomi storici `--sf-*` per debug.
+     */
+    internalTokenNames?: StyleFlowInternalTokenNameMode;
   };
   tailwind: {
     enabled: boolean;
@@ -64,7 +71,7 @@ export function defineStyleFlowConfig(config: StyleFlowConfig): StyleFlowConfig 
 export function createDefaultStyleFlowConfig(): StyleFlowConfig {
   return {
     tokens: { source: "./tokens/styleflow.tokens.json" },
-    output: { dir: ".styleflow", minify: false },
+    output: { dir: ".styleflow", minify: false, internalTokenNames: "compact" },
     tailwind: { enabled: true },
     runtime: {
       strategy: "usage-based",
@@ -97,6 +104,10 @@ export function normalizeStyleFlowConfig(input: unknown): StyleFlowConfig {
   if (!STYLEFLOW_DYNAMIC_MODES.includes(dynamic)) {
     throw new Error(`Unsupported runtime dynamic mode: ${dynamic}. Use error or contract.`);
   }
+  const internalTokenNames = candidate.output?.internalTokenNames ?? defaults.output.internalTokenNames ?? "compact";
+  if (!STYLEFLOW_INTERNAL_TOKEN_NAME_MODES.includes(internalTokenNames)) {
+    throw new Error(`Unsupported output internalTokenNames mode: ${internalTokenNames}. Use compact or verbose.`);
+  }
   if (candidate.build?.type && candidate.build.type !== "dev" && candidate.build.type !== "production") {
     throw new Error(`Unsupported build type: ${candidate.build.type}. Use dev or production.`);
   }
@@ -106,7 +117,8 @@ export function normalizeStyleFlowConfig(input: unknown): StyleFlowConfig {
     output: {
       dir: candidate.output?.dir ?? defaults.output.dir,
       minify: candidate.output?.minify ?? defaults.output.minify,
-      legacyTokensCss: candidate.output?.legacyTokensCss === true
+      legacyTokensCss: candidate.output?.legacyTokensCss === true,
+      internalTokenNames
     },
     tailwind: { enabled: candidate.tailwind?.enabled ?? defaults.tailwind.enabled },
     runtime: {

@@ -33,7 +33,8 @@ describe("StyleFlow compiler", () => {
     expect(first.outputs["runtime.css"]).toContain("--typography-heading-default-heading-1-size");
     expect(first.outputs["runtime.css"]).toContain('[data-text-style="heading-default-heading-1"]');
     expect(first.outputs["runtime.css"]).not.toContain("--typography-heading-1-size");
-    expect(first.outputs["runtime.css"]).toContain("--sf-color-intensity--local--surface: var(--sf-color-tone--1--local--surface);");
+    expect(first.outputs["runtime.css"]).toMatch(/--local-surface: var\(--_sf-[a-z]+\);/);
+    expect(first.outputs["runtime.css"]).not.toContain("--sf-color-intensity--");
     expect(first.outputs["theme.css"]).toContain("@theme inline");
     expect(first.outputs["theme.css"]).toContain("--container-local-container");
     expect(first.outputs["theme.css"]).toContain("--text-heading-default-heading-1");
@@ -47,7 +48,10 @@ describe("StyleFlow compiler", () => {
     expect(first.outputs["contract.ts"]).toContain("styleflowTextStyles");
     expect(first.outputs["runtime.css"]).not.toContain("data-feedback");
     expect(first.report.sourceTokens).toBeGreaterThan(1000);
-    expect(first.report.warnings[0].path).toBe("output.css");
+    expect(first.report.cssBytes).toBe(first.report.cssBreakdown.styleflowBytes);
+    expect(first.report.cssBreakdown.internalTokenNameMode).toBe("compact");
+    expect(first.report.cssBreakdown.runtimeBytes).toBe(Buffer.byteLength(first.outputs["runtime.css"], "utf8"));
+    expect(first.report.cssBreakdown.internalCustomProperties).toBeGreaterThan(0);
   });
 
   it("emits reset blocks so a default-mode axis nested under a non-default value returns to baseline", async () => {
@@ -66,8 +70,8 @@ describe("StyleFlow compiler", () => {
     expect(css.indexOf('[data-color-tone="neutral"]')).toBeLessThan(css.indexOf('[data-color-tone="main"]'));
     expect(css.indexOf('[data-layout-role="none"]')).toBeLessThan(css.indexOf('[data-layout-role="section"]'));
 
-    // Il reset del tono ripristina la variabile di tono al valore neutral.
-    expect(css).toContain("--sf-color-tone--1--local--surface: var(--sf-semantic-color--neutral--1--local--surface);");
+    // Il reset del tono ripristina le variabili di tono ai valori neutral usando nomi interni compatti.
+    expect(css).toMatch(/:root,\n\[data-color-tone="neutral"\] \{\n(?:.|\n)*?--_sf-[a-z]+: var\(--_sf-[a-z]+\);/);
   });
 
   it("blocks unresolved aliases", async () => {
@@ -136,6 +140,8 @@ describe("StyleFlow compiler", () => {
     expect(result.outputs["runtime.css"]).not.toContain('[data-text-style="body-default-body-md"]');
     expect(result.outputs["runtime.css"]).toContain("--typography-heading-default-heading-2-size");
     expect(result.outputs["runtime.css"]).not.toContain("--typography-body-default-body-md-size");
+    expect(result.outputs["theme.css"]).toContain("--text-heading-default-heading-2:");
+    expect(result.outputs["theme.css"]).not.toContain("--text-body-default-body-md:");
   });
 
   it("blocks dynamic runtime axes by default", async () => {
@@ -292,17 +298,32 @@ describe("StyleFlow compiler", () => {
     // Primitives and OnSurfaceInteractive* are collapsed/inlined, never emitted as --sf-*
     expect(css).not.toContain("--sf-primitives");
     expect(css).not.toContain("--sf-on-surface-interactive");
-    // BrandColors stay named but carry resolved hex (rgb), and dimensions map to Tailwind
-    expect(css).toMatch(/--sf-brand-colors[^:]*:\s*rgb\(/);
+    // Internal runtime tokens use compact private names, carry resolved hex (rgb),
+    // and dimensions map to Tailwind.
+    expect(css).toMatch(/--_sf-[a-z]+:\s*rgb\(/);
+    expect(css).not.toContain("--sf-semantic-color--");
+    expect(css).not.toContain("--sf-color-tone--");
+    expect(css).not.toContain("--sf-color-intensity--");
+    expect(css).not.toContain("--sf-brand-colors--");
     expect(css).toContain("calc(var(--spacing) *");
 
-    // No dangling references: every var(--sf-*) used WITHOUT a fallback must be defined.
-    // (The --sf-font-*/--sf-weight-*/--sf-leading-* typography knobs live in the user's
-    // override file and are always referenced with a fallback, so they are excluded.)
-    const defined = new Set(Array.from(css.matchAll(/(--sf-[a-z0-9-]+)\s*:/g), (match) => match[1]));
-    const referenced = new Set(Array.from(css.matchAll(/var\((--sf-[a-z0-9-]+)\s*\)/g), (match) => match[1]));
+    // No dangling references: every compact internal var used without a fallback must be defined.
+    const defined = new Set(Array.from(css.matchAll(/(--_sf-[a-z0-9-]+)\s*:/g), (match) => match[1]));
+    const referenced = new Set(Array.from(css.matchAll(/var\((--_sf-[a-z0-9-]+)\s*\)/g), (match) => match[1]));
     const dangling = Array.from(referenced).filter((name) => !defined.has(name));
     expect(dangling).toEqual([]);
+  });
+
+  it("can emit verbose internal token names for debugging", async () => {
+    const compact = await compileFixture(fixture, { strategy: "public-contract" });
+    const verbose = await compileFixture(fixture, { strategy: "public-contract", internalTokenNames: "verbose" });
+
+    expect(compact.outputs["runtime.css"]).not.toContain("--sf-color-intensity--local--surface");
+    expect(verbose.outputs["runtime.css"]).toContain("--sf-color-intensity--local--surface: var(--sf-color-tone--1--local--surface);");
+    expect(verbose.outputs["runtime.css"]).toContain("--sf-brand-colors--main--200");
+    expect(verbose.outputs["styleflow.css"].length).toBeGreaterThan(compact.outputs["styleflow.css"].length);
+    expect(compact.report.cssBreakdown.internalTokenNameMode).toBe("compact");
+    expect(verbose.report.cssBreakdown.internalTokenNameMode).toBe("verbose");
   });
 
   it("uses usage-based as the normalized default strategy", async () => {
@@ -388,6 +409,7 @@ async function compileFixture(tokens: StyleflowTokensFile, options: {
   usageReport?: boolean;
   safelist?: Record<string, string[] | "*">;
   usageManifest?: unknown;
+  internalTokenNames?: "compact" | "verbose";
   omitRuntime?: boolean;
   content?: string;
   contentPath?: string;
@@ -407,7 +429,7 @@ async function compileFixture(tokens: StyleflowTokensFile, options: {
   }
   await writeFile(join(cwd, "styleflow.config.mjs"), `export default {
   tokens: { source: "./styleflow.tokens.json" },
-  output: { dir: ".styleflow", minify: ${options.minify ? "true" : "false"} },
+  output: { dir: ".styleflow", minify: ${options.minify ? "true" : "false"}, internalTokenNames: "${options.internalTokenNames ?? "compact"}" },
   tailwind: { enabled: true },
   ${options.omitRuntime ? "" : `runtime: { strategy: "${options.strategy ?? "full"}", dynamic: "${options.dynamic ?? "error"}", safelist: ${JSON.stringify(options.safelist ?? {})}, usageManifests: ${JSON.stringify(usageManifests)} },`}
   typography: { emitBase: true, emitOverrideTemplate: false, overrideFile: "./src/styles/styleflow-typography.css" },
@@ -421,6 +443,7 @@ async function compileFixture(tokens: StyleflowTokensFile, options: {
     dynamic: _dynamic,
     safelist: _safelist,
     usageManifest: _usageManifest,
+    internalTokenNames: _internalTokenNames,
     omitRuntime: _omitRuntime,
     ...compileOptions
   } = options;
